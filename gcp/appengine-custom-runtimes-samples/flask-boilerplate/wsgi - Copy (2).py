@@ -7,9 +7,6 @@ from datetime import datetime
 from google.cloud import storage
 from flask_cors import CORS
 from flask import jsonify
-import math
-import json
-from flask import request
 
 app = Flask(__name__)
 CORS(app)
@@ -24,38 +21,27 @@ def hello():
 def shownow():
 	return str(datetime.now())
 
-def distance(x1,y1,x2,y2):
-	return math.sqrt( (x2-x1)*(x2-x1) + (y2-y1)*(y2-y1) )
-
-
-def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
-	# load the COCO class labels our YOLO model was trained on
-	#labelsPath = os.path.sep.join([args["yolo"], "coco.names"])
-	print("[INFO] loading YOLO {} {} {} {}".format(dynrange1,dynrange2,dynrange3,dynrange4) )
+def removebg(image,dynval=25):
+	print("[INFO] loading YOLO ")
 	labelsPath = "coco.names"
 	LABELS = open(labelsPath).read().strip().split("\n")
 
 	# initialize a list of colors to represent each possible class label
 	np.random.seed(42)
 	COLORS = np.random.randint(0, 255, size=(len(LABELS), 3), dtype="uint8")
-		
-	# derive the paths to the YOLO weights and model configuration
-	#weightsPath = os.path.sep.join([args["yolo"], "yolov3.weights"])
-	#configPath = os.path.sep.join([args["yolo"], "yolov3.cfg"])
 	print("[INFO] loaded YOLO label")
 	# derive the paths to the YOLO weights and model configuration
 	weightsPath = "yolov3.weights"
 	configPath = "yolov3.cfg"
+
 	# load our YOLO object detector trained on COCO dataset (80 classes)
 	print("[INFO] loading YOLO from disk...")
 	net = cv2.dnn.readNetFromDarknet(configPath, weightsPath)
-
+	print("[INFO] done load YOLO from bucket...")
 	# load our input image and grab its spatial dimensions
 	#image = cv2.imread(args["image"])
 	(H, W) = image.shape[:2]
-	print("image size = {} {}".format(H,W))
-	ratio = max(W/640,H/480)
-	#image = cv2.resize(image, (int(W/ratio), int(H/ratio)) )
+
 	# determine only the *output* layer names that we need from YOLO
 	ln = net.getLayerNames()
 	ln = [ln[i[0] - 1] for i in net.getUnconnectedOutLayers()]
@@ -109,7 +95,7 @@ def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
 				boxes.append([x, y, int(width), int(height)])
 				confidences.append(float(confidence))
 				classIDs.append(classID)
-				
+			
 	# apply non-maxima suppression to suppress weak, overlapping bounding
 	# boxes
 	idxs = cv2.dnn.NMSBoxes(boxes, confidences, 0.5,
@@ -120,8 +106,8 @@ def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
 	if len(idxs) > 0:
 		# loop over the indexes we are keeping
 		for i in idxs.flatten():
-			print("processing {} {}".format(LABELS[classIDs[i]],i)) 
-			one_img = {"key": i, "label": LABELS[classIDs[i]]}
+			print("processing {} {}".format(LABELS[classIDs[i]],i))  
+			one_img = {"key": i, "label": LABELS[classIDs[i]]}			
 			# extract the bounding box coordinates
 			(x, y) = (boxes[i][0], boxes[i][1])
 			(w, h) = (boxes[i][2], boxes[i][3])
@@ -130,94 +116,44 @@ def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
 			color = [int(c) for c in COLORS[classIDs[i]]]
 			# Rectange values: start x, start y, width, height
 			rectangle = (x, y, w, h)
-			print("size is {} {}".format(w,h))
-			if ( w*h < 100 ) :
-				continue
 			crop_img = image[y:y+h, x:x+w]
-			print(crop_img.shape[:2])
 			cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
 			text = "{}: {:.4f}".format(LABELS[classIDs[i]], confidences[i])
 			print(LABELS[classIDs[i]])
 			cv2.putText(image, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX,
 				0.5, color, 2)
-
+				
+							
+							
 			# show the output image
-			#imS = cv2.resize(crop_img, (640, 480))
-			(smallH, smallW) = crop_img.shape[:2]
-			if ( smallW*smallH < 100 ) :
-				continue
-			print("image size = {} {}".format(smallH, smallW))
-			ratio = max(smallW/640,smallH/480/2)*2
-			img = cv2.resize(crop_img, (int(smallW/ratio), int(smallH/ratio)) )
+			imS = cv2.resize(crop_img, (640, 480))
 			print("canny edge detection")
-			#img = crop_img
-			#dynrange = 25
-			edgestart = 100
-			edgeend = edgestart + dynrange1
-			print(crop_img.shape[:2])
-			edges = cv2.Canny(img,edgestart,edgeend)
-			#cv2.imshow('edge',edges)
-			#cv2.waitKey(0)		
-		
+			img = imS
+
+			edges = cv2.Canny(img,100,200)
+
 			(row,column,channel) = img.shape
 			print("remove background")
 			marker = np.zeros_like(img[:,:,0]).astype(np.int32)
-			
-			pctx1 = np.zeros(column).astype(np.double)
-			pctx99 = np.zeros(column).astype(np.double)
-			pcty1 = np.zeros(row).astype(np.double)
-			pcty99 = np.zeros(row).astype(np.double)
-			#print(pcty1.shape)
-			lowbound = dynrange1
-			highbound = 100 - lowbound
-			for i in range(row):
-				temp_list = []
-				#print(i)
-				for j in range(column):
-					if(edges[i][j] > 0):
-						temp_list.append(j)
-				#print(temp_list)
-				if( len(temp_list) > 0):
-					pcty1[i] = np.percentile(temp_list,lowbound)
-					pcty99[i] = np.percentile(temp_list,highbound)
-				else:
-					pcty1[i] = 0
-					pcty99[i] = column
-			for j in range(column):			
-				temp_list = []
-				for i in range(row):
-					if(edges[i][j] > 0):
-						temp_list.append(i)
-				if( len(temp_list) > 0):
-					pctx1[j] = np.percentile(temp_list,lowbound)
-					pctx99[j] = np.percentile(temp_list,highbound)		
-				else:
-					pctx1[j] = 0
-					pctx99[j] = row
+
 
 			objx = []
 			objy = []
-			
 			for i in range(row):	
 				for j in range(column):
 					if(edges[i][j] > 0):
 						objx.append(i)
 						objy.append(j)
-			#print(len(objx))
-			#print(len(objy))	
-			if (len(objx) == 0 or len(objy) == 0):
-				continue
+						
 			a = np.array(objx)
 			b = np.array(objy)
 			mid=50
-			fixrange = dynrange2
-			dynrange = fixrange
-			pct1 = max(0,mid - dynrange)
-			pct2 = min(100,mid + dynrange)
-			pct3 = min(dynrange,pct1)
-			pct4 = min(max(100-dynrange,pct2),100)
-			#print(len(a))
-			#print(len(b))
+			fixrange = 20
+			dynrange = 25
+			pct1 = mid - dynrange
+			pct2 = mid + dynrange
+			pct3 = max(5,pct1 - fixrange)
+			pct4 = min(95,pct2 + fixrange)
 			px1 = np.percentile(a, pct1)
 			py1 = np.percentile(b, pct1)
 			px2 = np.percentile(a, pct2)
@@ -226,73 +162,19 @@ def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
 			py3 = np.percentile(b, pct3)
 			px4 = np.percentile(a, pct4)
 			py4 = np.percentile(b, pct4)
-			midx = np.percentile(a, 50)
-			midy = np.percentile(b, 50)
-
-			dx = np.std(a)
-			dy = np.std(b)
-			dv = 0.1*dynrange3*math.sqrt(dx*dx+dy*dy)
-			lx = max(a)
-			ly = max(b)
 
 
 			print("obj is {},{},{},{}".format(px1,px2,py1,py2) )
 
 			for i in range(row):	
 				for j in range(column):
-					#if ( i > pctx1[j] and i < pctx99[j] and j > pcty1[i] and j < pcty99[i]):
-					if( distance(i,j,midx,midy) <= dv):
+				# please add condition to reject too far away points
+					if (i > px1 and i < px2 and j > py1 and j < py2):
 						marker[i][j] = 255
-					elif (i > px1 and i < px2 and j > py1 and j < py2):
-						marker[i][j] = 99
-					elif ( (i < px3 or i > px4) and (j < py3 or j > py4) ):
+					elif (i < px3 or i > px4 or j < py3 or j > py4):
 						marker[i][j] = 1
 					else:
 						marker[i][j] = 0
-					
-			# close color
-			colorbuck = 10
-			currentRGB = np.zeros(3, dtype=int)
-			centerRGB = np.zeros( (colorbuck,colorbuck,colorbuck) , dtype=int )
-			cornerRGB = np.zeros( (colorbuck,colorbuck,colorbuck) , dtype=int )
-			centerCNT = 0
-			cornerCNT = 0
-			for i in range(row):	
-				for j in range(column):
-					#if ( i > pctx1[j] and i < pctx99[j] and j > pcty1[i] and j < pcty99[i]):
-					if (i > px1 and i < px2 and j > py1 and j < py2):
-						for k in range(3):
-							currentRGB[k] = int(img[i,j,k] / int(260/colorbuck))
-						centerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] = centerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] + 1
-						centerCNT = centerCNT + 1
-					elif ( (i < px3 or i > px4) and (j < py3 or j > py4) and distance(i,j,midx,midy) > dv  ):
-						for k in range(3):
-							currentRGB[k] = int(img[i,j,k] / int(260/colorbuck))
-						cornerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] = cornerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] + 1
-						cornerCNT = cornerCNT + 1
-			print("cnt: {} {}".format(centerCNT,cornerCNT) )
-			for i in range(colorbuck):
-				for j in range(colorbuck):
-					for k in range(colorbuck):
-
-						centerRGB[i,j,k] = int(centerRGB[i,j,k]*100 / (centerCNT + 1) )
-						cornerRGB[i,j,k] = int(cornerRGB[i,j,k]*100 / (cornerCNT + 1) )
-
-			colorgap = dynrange4
-			for i in range(row):	
-				for j in range(column):
-					currentRGB = np.zeros(3, dtype=int)
-					for k in range(3):
-						currentRGB[k] = int(img[i,j,k] / int(260/colorbuck))
-					#if ( abs(img[i,j,0]-centerRGB[0]) < colorgap and abs(img[i,j,1]-centerRGB[1]) < colorgap and abs(img[i,j,2]-centerRGB[2]) < colorgap ):
-					if( centerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] > colorgap ):
-						#print("center")
-						marker[i][j] = 255
-					elif ( cornerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] > colorgap and distance(i,j,midx,midy) > dv ):
-						#print("background")
-						marker[i][j] = 1
-
-			#print(marker[0])
 			marked = cv2.watershed(img, marker)
 
 			# Plot this one. If it does what we want, proceed;
@@ -300,65 +182,42 @@ def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
 			#plt.imshow(marked, cmap='gray')
 			#plt.show()
 
-			marked2 = np.zeros_like(marked).astype(np.int32)
-			for i in range(row):	
-				for j in range(column):
-					if(marked[i][j] > 1):
-						marked2[i,j] = 255
-						for k in range(2):
-							if (i-k>=0):
-								marked2[i-k,j] = 255
-							if (i+k<row):
-								marked2[i+k,j] = 255
-							if (j-k>=0):
-								marked2[i,j-k] = 255
-							if (j+k<column):
-								marked2[i,j+k] = 255
-							if (i-k>=0 and j-k>=0):
-								marked2[i-k,j-k] = 255
-							if (i-k>=0 and j+k<column):
-								marked2[i-k,j+k] = 255
-							if (i+k<row and j-k>=0):
-								marked2[i+k,j-k] = 255
-							if (i+k<row and j+k<column):
-								marked2[i+k,j+k] = 255
-
 			# Make the background black, and what we want to keep white
-			#marked[marked == 1] = 0
-			#marked[marked > 1] = 255
+			marked[marked == 1] = 0
+			marked[marked > 1] = 255
 
 			# Use a kernel to dilate the image, to not lose any detail on the outline
 			# I used a kernel of 3x3 pixels
 			kernel = np.ones((3,3),np.uint8)
-			dilation = cv2.dilate(marked2.astype(np.float32), kernel, iterations = 1)
-
+			dilation = cv2.dilate(marked.astype(np.float32), kernel, iterations = 1)
+			
 			# Plot again to check whether the dilation is according to our needs
 			# If not, repeat by using a smaller/bigger kernel, or more/less iterations
 			#plt.imshow(dilation, cmap='gray')
 			#plt.show()
-
+			print("mask")
 			# Now apply the mask we created on the initial image
 			final_img = cv2.bitwise_and(img, img, mask=dilation.astype(np.uint8))
-
-
+			print("transpartent")
+			# cv2.imread reads the image as BGR, but matplotlib uses RGB
+			# BGR to RGB so we can plot the image with accurate colors
+			#b, g, r = cv2.split(final_img)
+			#final_img = cv2.merge([r, g, b])
+			#image = cv2.imread('./Desktop/maze.png')
+			#final_img = cv2.cvtColor(final_img, cv2.COLOR_BGR2RGBA)
+			#final_img[np.all(final_img == [0, 0, 0, 255], axis=2)] = [0, 0, 0, 0]
 			tmp = cv2.cvtColor(final_img, cv2.COLOR_BGR2GRAY)
 			_,alpha = cv2.threshold(tmp,0,255,cv2.THRESH_BINARY)
 			b, g, r = cv2.split(final_img)
 			rgba = [b,g,r, alpha]
 			dst = cv2.merge(rgba,4)
 			one_img['img'] = dst
-
 			final_list.append(one_img)
+				
 	return final_list
-
 	
-
-@app.route('/image', methods=['POST'])
+@app.route('/image')
 def getfile():
-	if not request.json:
-		abort(400)
-	print(request.json)
-	mydict = request.json
 	for words in open("mydata.txt", 'r').readlines():
 		print(words)
 	print("start get image")
@@ -366,7 +225,7 @@ def getfile():
 	# https://console.cloud.google.com/storage/browser/[bucket-id]/iwasnothing-ml-temp
 	bucket = client.get_bucket('iwasnothing03.appspot.com')
 	# Then do other things...
-	blob = bucket.get_blob('public/'+mydict['file'])
+	blob = bucket.get_blob('public/momo02.jpg')
 	img_str=blob.download_as_string()
 	print("blob get image")
 	nparr = np.fromstring(img_str, np.uint8)
@@ -374,7 +233,7 @@ def getfile():
 	img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 	print("decode image")
 	#imS = cv2.resize(img_np, (640, 480))
-	final_list = removebg(img_np,int(mydict['parm1']),int(mydict['parm2']),int(mydict['parm3']),int(mydict['parm4']))
+	final_list = removebg(img_np,25)
 	list = []
 	for im1 in final_list:
 		print("showing {} {}".format(im1['key'],im1['label']) )
@@ -385,14 +244,12 @@ def getfile():
 		#response.headers['Content-Type'] = 'image/png'
 		buf_str = np.array(buf).tostring()
 		print("converted to string np array")
-		fileprefix = mydict['file'].split('.')[0]
-		outfilename = 'public/{}_{}_{}.png'.format(fileprefix,im1['key'],im1['label'])
+		outfilename = 'public/momo_crop_{}_{}.png'.format(im1['key'],im1['label'])
 		list.append({'key': int(im1['key']), 'name': outfilename})
 		print("writing bucket " + outfilename)
 		outblob = bucket.blob(outfilename)
 		print("upload to bucket")
 		outblob.upload_from_string(buf_str,content_type='image/png')
-		outblob.make_public()
 		print("done upload")
 	print(list)   
 

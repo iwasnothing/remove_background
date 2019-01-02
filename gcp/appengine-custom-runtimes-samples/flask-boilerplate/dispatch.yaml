@@ -1,0 +1,7 @@
+dispatch:
+  # Default service serves the typical web resources and all static resources.
+  - url: "/now"
+    service: default
+    
+  - url: "/image"
+    service: default

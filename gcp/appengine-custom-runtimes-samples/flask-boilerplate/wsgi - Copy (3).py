@@ -147,7 +147,7 @@ def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
 			if ( smallW*smallH < 100 ) :
 				continue
 			print("image size = {} {}".format(smallH, smallW))
-			ratio = max(smallW/640,smallH/480/2)*2
+			ratio = max(smallW/640,smallH/480)
 			img = cv2.resize(crop_img, (int(smallW/ratio), int(smallH/ratio)) )
 			print("canny edge detection")
 			#img = crop_img
@@ -231,7 +231,7 @@ def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
 
 			dx = np.std(a)
 			dy = np.std(b)
-			dv = 0.1*dynrange3*math.sqrt(dx*dx+dy*dy)
+			dv = math.sqrt(dx*dx+dy*dy)
 			lx = max(a)
 			ly = max(b)
 
@@ -241,54 +241,44 @@ def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
 			for i in range(row):	
 				for j in range(column):
 					#if ( i > pctx1[j] and i < pctx99[j] and j > pcty1[i] and j < pcty99[i]):
-					if( distance(i,j,midx,midy) <= dv):
+					if( distance(i,j,midx,midy) <= dynrange3):
 						marker[i][j] = 255
-					elif (i > px1 and i < px2 and j > py1 and j < py2):
+					if (i > px1 and i < px2 and j > py1 and j < py2):
 						marker[i][j] = 99
-					elif ( (i < px3 or i > px4) and (j < py3 or j > py4) ):
+					elif ( (i < px3 or i > px4) or (j < py3 or j > py4) ):
 						marker[i][j] = 1
 					else:
 						marker[i][j] = 0
 					
 			# close color
-			colorbuck = 10
-			currentRGB = np.zeros(3, dtype=int)
-			centerRGB = np.zeros( (colorbuck,colorbuck,colorbuck) , dtype=int )
-			cornerRGB = np.zeros( (colorbuck,colorbuck,colorbuck) , dtype=int )
+			centerRGB = [0,0,0]
+			cornerRGB = [0,0,0]
 			centerCNT = 0
 			cornerCNT = 0
 			for i in range(row):	
 				for j in range(column):
-					#if ( i > pctx1[j] and i < pctx99[j] and j > pcty1[i] and j < pcty99[i]):
-					if (i > px1 and i < px2 and j > py1 and j < py2):
+					if ( i > pctx1[j] and i < pctx99[j] and j > pcty1[i] and j < pcty99[i]):
 						for k in range(3):
-							currentRGB[k] = int(img[i,j,k] / int(260/colorbuck))
-						centerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] = centerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] + 1
-						centerCNT = centerCNT + 1
-					elif ( (i < px3 or i > px4) and (j < py3 or j > py4) and distance(i,j,midx,midy) > dv  ):
+							centerRGB[k] = centerRGB[k] + img[i,j,k]
+							centerCNT = centerCNT + 1
+					elif (i > px1 and i < px2 and j > py1 and j < py2):
 						for k in range(3):
-							currentRGB[k] = int(img[i,j,k] / int(260/colorbuck))
-						cornerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] = cornerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] + 1
-						cornerCNT = cornerCNT + 1
-			print("cnt: {} {}".format(centerCNT,cornerCNT) )
-			for i in range(colorbuck):
-				for j in range(colorbuck):
-					for k in range(colorbuck):
-
-						centerRGB[i,j,k] = int(centerRGB[i,j,k]*100 / (centerCNT + 1) )
-						cornerRGB[i,j,k] = int(cornerRGB[i,j,k]*100 / (cornerCNT + 1) )
-
+							cornerRGB[k] = cornerRGB[k] + img[i,j,k]
+							cornerCNT = cornerCNT + 1
+			
+			for k in range(3):
+				centerRGB[k] = centerRGB[k] / (centerCNT + 1)
+				cornerRGB[k] = cornerRGB[k] / (cornerCNT + 1)
+			
+			print(centerRGB)
+			print(cornerRGB)
 			colorgap = dynrange4
 			for i in range(row):	
 				for j in range(column):
-					currentRGB = np.zeros(3, dtype=int)
-					for k in range(3):
-						currentRGB[k] = int(img[i,j,k] / int(260/colorbuck))
-					#if ( abs(img[i,j,0]-centerRGB[0]) < colorgap and abs(img[i,j,1]-centerRGB[1]) < colorgap and abs(img[i,j,2]-centerRGB[2]) < colorgap ):
-					if( centerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] > colorgap ):
+					if ( abs(img[i,j,0]-centerRGB[0]) < colorgap and abs(img[i,j,1]-centerRGB[1]) < colorgap and abs(img[i,j,2]-centerRGB[2]) < colorgap ):
 						#print("center")
 						marker[i][j] = 255
-					elif ( cornerRGB[currentRGB[0],currentRGB[1],currentRGB[2]] > colorgap and distance(i,j,midx,midy) > dv ):
+					elif ( abs(img[i,j,0]-cornerRGB[0]) < colorgap and abs(img[i,j,1]-cornerRGB[1]) < colorgap and abs(img[i,j,2]-cornerRGB[2]) < colorgap ):
 						#print("background")
 						marker[i][j] = 1
 
@@ -305,7 +295,7 @@ def removebg(image,dynrange1=25,dynrange2=25,dynrange3=25,dynrange4=25):
 				for j in range(column):
 					if(marked[i][j] > 1):
 						marked2[i,j] = 255
-						for k in range(2):
+						for k in range(5):
 							if (i-k>=0):
 								marked2[i-k,j] = 255
 							if (i+k<row):
@@ -392,7 +382,6 @@ def getfile():
 		outblob = bucket.blob(outfilename)
 		print("upload to bucket")
 		outblob.upload_from_string(buf_str,content_type='image/png')
-		outblob.make_public()
 		print("done upload")
 	print(list)   
 
